@@ -148,6 +148,7 @@ fn create_csv_file_for_MTP_statistics(filename: &str) -> Result<(), Box<dyn Erro
             "sending_bitrate_mbps",
             "recving_bitrate_mbps",
             "C",
+            "gaze_variance_magnitude",
             "experiment_target_timestamp",
         ])?;
     } else {
@@ -966,11 +967,33 @@ fn connection_pipeline(
                         data[2] = right_frame_x;
                         data[3] = right_frame_y;
                         
-                        let tracking_ts= tracking.target_timestamp.as_nanos().to_string();//tracking received timestamp
+                        let tracking_ts = tracking.target_timestamp.as_nanos().to_string();
+                        let (var_x_str, var_y_str, var_mag_str) = {
+                            let mgr = BITRATE_MANAGER.lock();
+                            match mgr.get_gaze_variance() {
+                                Some((vx, vy)) => (
+                                    vx.to_string(),
+                                    vy.to_string(),
+                                    mgr.get_gaze_variance_magnitude()
+                                        .map(|m| m.to_string())
+                                        .unwrap_or_default(),
+                                ),
+                                None => ("".to_string(), "".to_string(), "".to_string()),
+                            }
+                        };
 
-                        // Log gaze location (X_o, Y_o) for both eye in Screen Space Coordinates to csv file
-                        let eye_data=[tracking_ts,left_frame_x.to_string(),left_frame_y.to_string(),right_frame_x.to_string(),right_frame_y.to_string()];
-                        write_latency_to_csv("eyegaze.csv", eye_data);
+                        // Log gaze location and gaze variance (sliding-window) to csv for analysis/plots
+                        let eye_data = [
+                            tracking_ts,
+                            left_frame_x.to_string(),
+                            left_frame_y.to_string(),
+                            right_frame_x.to_string(),
+                            right_frame_y.to_string(),
+                            var_x_str,
+                            var_y_str,
+                            var_mag_str,
+                        ];
+                        write_eyegaze_to_csv("eyegaze.csv", eye_data);
                         
                     }
 
@@ -1079,12 +1102,17 @@ fn connection_pipeline(
                     let timestamp = client_stats.target_timestamp;
                     let decoder_latency = client_stats.video_decode;
                     let cls = client_stats.clone();
-                    let (network_latency, bitrate_mbps,C )= stats.report_statistics(client_stats);
+                    let (network_latency, bitrate_mbps, C) = stats.report_statistics(client_stats);
                     let mut recv_bitrate_mbps = "".to_string();
-                    if cls.recv_bitrate_report_mbps != 0.0{
+                    if cls.recv_bitrate_report_mbps != 0.0 {
                         recv_bitrate_mbps = cls.recv_bitrate_report_mbps.to_string();
                     }
-                    stats.report_statistics_MTP(cls, bitrate_mbps, C, recv_bitrate_mbps);
+                    let gaze_var_str = BITRATE_MANAGER
+                        .lock()
+                        .get_gaze_variance_magnitude()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| String::new());
+                    stats.report_statistics_MTP(cls, bitrate_mbps, C, recv_bitrate_mbps, gaze_var_str);
                     let server_data_lock = SERVER_DATA_MANAGER.read();
                     BITRATE_MANAGER.lock().report_frame_latencies(
                         &server_data_lock.settings().video.bitrate.mode,
@@ -1524,35 +1552,40 @@ pub extern "C" fn send_haptics(device_id: u64, duration_s: f32, frequency: f32, 
     }
 }
 fn write_latency_to_csv(filename: &str, latency_values: [String; 5]) -> Result<(), Box<dyn Error>> {
-
     let mut file = OpenOptions::new().write(true).append(true).open(filename)?;
     let mut writer = Writer::from_writer(file);
-
-    // Write the latency strings in the next row
     writer.write_record(&[
         &latency_values[0],
         &latency_values[1],
         &latency_values[2],
         &latency_values[3],
         &latency_values[4],
-        
-
-
-
     ])?;
+    Ok(())
+}
 
+/// Appends one row to eyegaze.csv: target_ts, leftx, lefty, rightx, righty, gaze_var_x, gaze_var_y, gaze_variance_magnitude.
+fn write_eyegaze_to_csv(filename: &str, row: [String; 8]) -> Result<(), Box<dyn Error>> {
+    let mut file = OpenOptions::new().write(true).append(true).open(filename)?;
+    let mut writer = Writer::from_writer(file);
+    writer.write_record(&[
+        &row[0], &row[1], &row[2], &row[3], &row[4], &row[5], &row[6], &row[7],
+    ])?;
     Ok(())
 }
 fn create_csv_file(filename: &str) -> Result<(), Box<dyn Error>> {
     let mut writer = WriterBuilder::new().has_headers(false).from_writer(File::create(filename)?);
 
-    // Write the column names in the first row
+    // Write the column names in the first row (gaze position + gaze variance over sliding window)
     writer.write_record(&[
         "target_ts",
         "leftx",
         "lefty",
         "rightx",
         "righty",
+        "gaze_var_x",
+        "gaze_var_y",
+        "gaze_variance_magnitude",
     ])?;
 
     Ok(())

@@ -52,3 +52,9 @@ The core logic resides in `alvr/server/src/congestion_controller.rs`:
 
 The timeout logic is handled in `alvr/server/src/lib.rs` inside `get_controller_c`.
 
+## CSV logging for analysis
+
+Gaze and gaze-variance data are written to CSVs in the same directory as other EyeNexus logs (e.g. SteamVR driver log directory, depending on process CWD):
+
+*   **eyegaze.csv** (per gaze sample): `target_ts`, `leftx`, `lefty`, `rightx`, `righty`, `gaze_var_x`, `gaze_var_y`, `gaze_variance_magnitude`. Variance is computed over the sliding window (see gaze history); empty when &lt; 2 samples.
+*   **statistics_mtp.csv** (per frame): same columns as before, plus `gaze_variance_magnitude` for frame-level analysis and plots.

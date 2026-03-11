@@ -15,6 +15,7 @@ gpl = [] # Enable for FFmpeg support on Windows. Always enabled on Linux
 [dependencies]
 alvr_audio.workspace = true
 alvr_common.workspace = true
+alvr_gaze.workspace = true
 alvr_events.workspace = true
 alvr_filesystem.workspace = true
 alvr_packets.workspace = true

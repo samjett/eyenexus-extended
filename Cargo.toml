@@ -13,6 +13,7 @@ license = "MIT"
 alvr_audio = { path = "alvr/audio" }
 alvr_client_core = { path = "alvr/client_core" }
 alvr_common = { path = "alvr/common" }
+alvr_gaze = { path = "alvr/gaze" }
 alvr_events = { path = "alvr/events" }
 alvr_filesystem = { path = "alvr/filesystem" }
 alvr_packets = { path = "alvr/packets" }

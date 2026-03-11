@@ -306,6 +306,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "alvr_gaze"
+version = "21.0.0-dev00"
+
+[[package]]
 name = "alvr_gui_common"
 version = "21.0.0-dev00"
 dependencies = [
@@ -347,6 +351,7 @@ dependencies = [
  "alvr_common",
  "alvr_events",
  "alvr_filesystem",
+ "alvr_gaze",
  "alvr_packets",
  "alvr_server_io",
  "alvr_session",

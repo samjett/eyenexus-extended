@@ -1,0 +1,10 @@
+[package]
+name = "alvr_gaze"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Gaze history and variance for EyeNexus (pure Rust, no native deps)"
+
+[dependencies]

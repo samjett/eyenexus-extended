@@ -1,3 +1,4 @@
+use alvr_gaze::{GazeHistory, DEFAULT_GAZE_HISTORY_SIZE};
 use crate::FfiDynamicEncoderParams;
 use alvr_common::SlidingWindowAverage;
 use alvr_events::NominalBitrateStats;
@@ -27,9 +28,10 @@ pub struct BitrateManager {
     previous_config: Option<BitrateConfig>,
     update_needed: bool,
     left_frame_x: f64,
-    left_frame_y:f64,
-    right_frame_x:f64,
-    right_frame_y:f64,
+    left_frame_y: f64,
+    right_frame_x: f64,
+    right_frame_y: f64,
+    gaze_history: GazeHistory,
 }
 
 impl BitrateManager {
@@ -57,9 +59,10 @@ impl BitrateManager {
             previous_config: None,
             update_needed: true,
             left_frame_x: 1072.0,
-            left_frame_y:1168.0,
-            right_frame_x:3216.0,
-            right_frame_y:1168.0,
+            left_frame_y: 1168.0,
+            right_frame_x: 3216.0,
+            right_frame_y: 1168.0,
+            gaze_history: GazeHistory::new(DEFAULT_GAZE_HISTORY_SIZE),
         }
     }
 
@@ -86,14 +89,33 @@ impl BitrateManager {
             }
         }
     }
-    pub fn report_eye_gaze_update(&mut self, L_x:f64,L_y:f64,R_x:f64,R_y:f64) {
-        self.left_frame_x=L_x;
-        self.left_frame_y=L_y;
-        self.right_frame_x=R_x;
-        self.right_frame_y=R_y;
+    /// Updates current gaze (screen space) and pushes the left-eye point into the sliding window.
+    pub fn report_eye_gaze_update(&mut self, L_x: f64, L_y: f64, R_x: f64, R_y: f64) {
+        self.left_frame_x = L_x;
+        self.left_frame_y = L_y;
+        self.right_frame_x = R_x;
+        self.right_frame_y = R_y;
+        self.gaze_history.push(L_x, L_y);
     }
-    pub fn get_eye_gaze_(&mut self) ->(f64,f64,f64,f64){
-        (self.left_frame_x,self.left_frame_y, self.right_frame_x, self.right_frame_y)
+
+    pub fn get_eye_gaze_(&self) -> (f64, f64, f64, f64) {
+        (
+            self.left_frame_x,
+            self.left_frame_y,
+            self.right_frame_x,
+            self.right_frame_y,
+        )
+    }
+
+    /// Variance of (x, y) over the gaze sliding window, in screen space.
+    /// Returns `(var_x, var_y)` or `None` if there are fewer than 2 samples.
+    pub fn get_gaze_variance(&self) -> Option<(f64, f64)> {
+        self.gaze_history.variance()
+    }
+
+    /// Scalar variance magnitude (var_x + var_y) over the gaze window, or `None` if unavailable.
+    pub fn get_gaze_variance_magnitude(&self) -> Option<f64> {
+        self.gaze_history.variance_magnitude()
     }
 
     pub fn report_frame_encoded(
