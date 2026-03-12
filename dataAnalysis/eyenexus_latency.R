@@ -8,6 +8,11 @@ stats_baseline <- read.csv("statistics_mtp.csv") |>
 stats_variance <- read.csv("statistics_mtp_variance.csv") |>
   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
 
+stats_combined <- bind_rows(
+  stats_baseline |> mutate(Dataset = "Baseline"),
+  stats_variance |> mutate(Dataset = "Variance")
+)
+
 # Helper to compute latency summary
 summarise_latency <- function(df, label) {
   df |>
@@ -51,7 +56,8 @@ component_colors <- c(
 )
 
 # latency breakdown bar plot
-ggplot(latency_long, aes(x = Dataset, y = Latency_ms, fill = Component)) +
+latency_long |>
+  ggplot(aes(x = Dataset, y = Latency_ms, fill = Component)) +
   geom_bar(stat = "identity", width = 0.4) +
   coord_flip() +
   theme_minimal(base_size = 14) +
@@ -72,10 +78,7 @@ ggplot(latency_long, aes(x = Dataset, y = Latency_ms, fill = Component)) +
             hjust = 1, size = 5, fontface = "bold")
 
 # MTP latency CDF
-bind_rows(
-  stats_baseline |> mutate(Dataset = "Baseline"),
-  stats_variance |> mutate(Dataset = "Variance")
-) |>
+stats_combined |>
   ggplot(aes(x = total_MTP_latency_ms, color = Dataset)) +
   stat_ecdf(geom = "step", size = 1) +
   coord_cartesian(xlim = c(55, 140)) +
@@ -89,10 +92,7 @@ bind_rows(
   )
 
 # MTP latency PDF
-bind_rows(
-  stats_baseline |> mutate(Dataset = "Baseline"),
-  stats_variance |> mutate(Dataset = "Variance")
-) |>
+stats_combined |>
   ggplot(aes(x = total_MTP_latency_ms, color = Dataset)) +
   coord_cartesian(xlim = c(55, 140)) +
   geom_density(size = 1) +
@@ -104,10 +104,7 @@ bind_rows(
   )
 
 # dot plot of sending bitrate
-bind_rows(
-  stats_baseline |> mutate(Dataset = "Baseline"),
-  stats_variance |> mutate(Dataset = "Variance")
-) |>
+stats_combined |>
   ggplot(aes(x = time_s, y = sending_bitrate_mbps, color = Dataset)) +
   geom_point(size = 1) +
   labs(
@@ -117,14 +114,36 @@ bind_rows(
   )
 
 # line plot of sending bitrate
-bind_rows(
-  stats_baseline |> mutate(Dataset = "Baseline"),
-  stats_variance |> mutate(Dataset = "Variance")
-) |>
+stats_combined |>
   ggplot(aes(x = time_s, y = sending_bitrate_mbps, color = Dataset)) +
   stat_summary_bin(
     fun = mean,
     binwidth = 10,
     geom = "step"
+  ) +
+  theme_minimal()
+
+# average sending bitrates
+stats_combined |>
+  group_by(Dataset) |>
+  summarize(average_sending_bitrate = mean(sending_bitrate_mbps, na.rm = TRUE)) |>
+  ggplot(aes(x=Dataset, y=average_sending_bitrate, fill=Dataset)) +
+  geom_col(width=.5) +
+  geom_text(aes(label = round(average_sending_bitrate, 2)), vjust = -0.5, size = 5) +
+  theme_minimal(base_size = 14) S+
+  labs(
+    title = "Average Sending Bitrate",
+    y = "Bitrate (Mbps)"
+  )
+
+
+# line plot of gaze variance
+stats_variance |>
+  ggplot(aes(x=time_s, y=gaze_variance_magnitude)) +
+  stat_summary_bin(fun=mean, binwidth = 10, geom="step") +
+  labs(
+    title = "Gaze variance magnitude over time",
+    x = "Time (s)",
+    y = "Magnitude"
   ) +
   theme_minimal()
