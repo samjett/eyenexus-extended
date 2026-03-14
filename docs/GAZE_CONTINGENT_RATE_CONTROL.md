@@ -71,7 +71,11 @@ When gaze is moving (high variance or high velocity), C_effective is **additiona
 
 The predictive delta uses a **smooth linear ramp** between low and high thresholds (not a binary step). Variance and velocity each produce a ramp factor in [0, 1]; the larger factor drives the delta:
 
-$$ \text{var\_factor} = \text{clamp}\!\left(\frac{V - V_{\text{low}}}{V_{\text{high}} - V_{\text{low}}},\; 0,\; 1\right) \qquad \text{vel\_factor} = \text{clamp}\!\left(\frac{u - u_{\text{low}}}{u_{\text{high}} - u_{\text{low}}},\; 0,\; 1\right) $$
+$$
+\text{var\\_factor} = \text{clamp}\!\left(\frac{V - V_{\text{low}}}{V_{\text{high}} - V_{\text{low}}},\ 0,\ 1\right)
+\qquad
+\text{vel\\_factor} = \text{clamp}\!\left(\frac{u - u_{\text{low}}}{u_{\text{high}} - u_{\text{low}}},\ 0,\ 1\right)
+$$
 
 $$
 \delta_{\text{pred}} = \Delta C_{\max} \times \max(\text{var\_factor},\; \text{vel\_factor})
