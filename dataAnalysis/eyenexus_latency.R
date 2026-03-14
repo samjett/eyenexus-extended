@@ -7,28 +7,30 @@ stats_baseline <- read.csv("statistics_mtp.csv") |>
   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9) |>
   filter(time_s < 3000)
 
-stats_baseline_2 <- read.csv("statistics_mtp_baseline.csv") |>
-  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
-
 stats_variance <- read.csv("statistics_mtp_variance.csv") |>
-  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
-
-stats_variance_more <- read.csv("statistics_mtp_variance_more.csv") |>
-  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9) |>
-  filter(time_s > 4000) |>
   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
 
 stats_variance_2 <- read.csv("statistics_mtp_variance_2.csv") |>
   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
 
-stats_variance_minecraft <- read.csv("statistics_mtp_minecraft.csv") |>
-  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
+# stats_baseline_2 <- read.csv("statistics_mtp_baseline.csv") |>
+#  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
+
+# stats_variance_more <- read.csv("statistics_mtp_variance_more.csv") |>
+#   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9) |>
+#   filter(time_s > 4000) |>
+#   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
+
+# stats_variance_minecraft <- read.csv("statistics_mtp_minecraft.csv") |>
+#   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
   
 datasets <- lst(
-  Baseline = stats_baseline,
-  Baseline2 = stats_baseline_2,
-  Variance = stats_variance,
-  VarianceMore = stats_variance_more,
+  EyeNexus = stats_baseline,
+  GazeVariance = bind_rows(stats_variance, stats_variance_2),
+  # Variance = stats_variance,
+  # Variance2 = stats_variance_2,
+  # Baseline2 = stats_baseline_2,
+  # VarianceMore = stats_variance_more,
   # VarianceMinecraft = stats_variance_minecraft
 )
 
@@ -162,7 +164,7 @@ stats_combined |>
   summarize(average_sending_bitrate = mean(sending_bitrate_mbps, na.rm = TRUE)) |>
   ggplot(aes(x=Dataset, y=average_sending_bitrate, fill=Dataset)) +
   geom_col(width=.5) +
-  geom_text(aes(label = round(average_sending_bitrate, 2)), vjust = -0.5, size = 5) +
+  geom_text(aes(label = round(average_sending_bitrate, 2)), vjust = 2, size = 5) +
   theme_minimal(base_size = 14) +
   labs(
     title = "Average Sending Bitrate",
