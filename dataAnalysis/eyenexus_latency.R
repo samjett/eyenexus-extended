@@ -168,7 +168,8 @@ stats_combined |>
   theme_minimal(base_size = 14) +
   labs(
     title = "Average Sending Bitrate",
-    y = "Bitrate (Mbps)"
+    y = "Bitrate (Mbps)",
+    x = ""
   )
 
 
