@@ -1,17 +1,38 @@
 library(tidyverse)
 
+setwd("/Users/rohan/Desktop/cs244/eyenexus-extended/dataAnalysis/")
+
 # Load both datasets
 stats_baseline <- read.csv("statistics_mtp.csv") |>
   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9) |>
   filter(time_s < 3000)
 
+stats_baseline_2 <- read.csv("statistics_mtp_baseline.csv") |>
+  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
+
 stats_variance <- read.csv("statistics_mtp_variance.csv") |>
   mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
 
-stats_combined <- bind_rows(
-  stats_baseline |> mutate(Dataset = "Baseline"),
-  stats_variance |> mutate(Dataset = "Variance")
+stats_variance_more <- read.csv("statistics_mtp_variance_more.csv") |>
+  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9) |>
+  filter(time_s > 4000) |>
+  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
+
+stats_variance_2 <- read.csv("statistics_mtp_variance_2.csv") |>
+  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
+
+stats_variance_minecraft <- read.csv("statistics_mtp_minecraft.csv") |>
+  mutate(time_s = (target_ts_nanos - min(target_ts_nanos)) / 1e9)
+  
+datasets <- lst(
+  Baseline = stats_baseline,
+  Baseline2 = stats_baseline_2,
+  Variance = stats_variance,
+  VarianceMore = stats_variance_more,
+  # VarianceMinecraft = stats_variance_minecraft
 )
+
+stats_combined <- bind_rows(datasets, .id = "Dataset")
 
 # Helper to compute latency summary
 summarise_latency <- function(df, label) {
@@ -30,10 +51,8 @@ summarise_latency <- function(df, label) {
     mutate(Dataset = label)
 }
 
-latency_long <- bind_rows(
-  summarise_latency(stats_baseline, "Baseline"),
-  summarise_latency(stats_variance, "Variance")
-)
+latency_long <- map2(datasets, names(datasets), summarise_latency) |>
+  list_rbind()
 
 # Factor ordering
 latency_long$Component <- factor(
@@ -91,6 +110,20 @@ stats_combined |>
     y = ""
   )
 
+# MTP latency (summed from everything but game and composite latency) CDF
+stats_combined |>
+  ggplot(aes(x = encode_latency_ms+decode_latency_ms+network_latency_ms+decoder_queue_latency_ms+rendering_latency_ms+vsync_queue_latency_ms, color = Dataset)) +
+  stat_ecdf(geom = "step", size = 1) +
+  coord_cartesian(xlim = c(55, 140)) +
+  scale_x_continuous(breaks = seq(60, 140, by = 20)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "CDF of MTP Latency (minus game sim and compositing) (WiFi)",
+    x = "Latency (ms)",
+    y = ""
+  )
+
 # MTP latency PDF
 stats_combined |>
   ggplot(aes(x = total_MTP_latency_ms, color = Dataset)) +
@@ -130,7 +163,7 @@ stats_combined |>
   ggplot(aes(x=Dataset, y=average_sending_bitrate, fill=Dataset)) +
   geom_col(width=.5) +
   geom_text(aes(label = round(average_sending_bitrate, 2)), vjust = -0.5, size = 5) +
-  theme_minimal(base_size = 14) S+
+  theme_minimal(base_size = 14) +
   labs(
     title = "Average Sending Bitrate",
     y = "Bitrate (Mbps)"
