@@ -77,6 +77,12 @@ lazy_static! {
         pub static ref EYE_GAZE_DATA: stdMutex<[f64; 4]> = stdMutex::new([1072.0, 1168.0, 3216.0, 1168.0]);
 }
 static EYENEXUS_MANAGER:Lazy<Mutex<EyeNexus_Controller>> = Lazy::new(|| Mutex::new(EyeNexus_Controller::new()));
+/// Last (controller_c, c_effective, fixation_confidence) from get_eyenexus_encoder_params, for CSV logging in send_video.
+pub(crate) static LAST_EYENEXUS_LOG_PARAMS: Lazy<Mutex<Option<(f32, f32, f32)>>> = Lazy::new(|| Mutex::new(None));
+
+/// EWMA of decode latency (ms) when predictive Gaussian is inactive; used to cap predictive widening by ~1.5 ms.
+static DECODE_LATENCY_BASELINE_EWMA: Lazy<Mutex<Option<f32>>> = Lazy::new(|| Mutex::new(None));
+const DECODE_LATENCY_BASELINE_EWMA_ALPHA: f32 = 0.1;
 pub struct VideoPacket {
     pub header: VideoPacketHeader,
     pub payload: Vec<u8>,
@@ -433,27 +439,111 @@ pub unsafe extern "C" fn HmdDriverFactory(
         let (left_x,left_y,right_x,right_y)=BITRATE_MANAGER.lock().get_eye_gaze_();
         right_y
     }
-    extern "C" fn get_controller_c() -> f32{
+    extern "C" fn get_controller_c() -> f32 {
         let mut c = 2.;
         let now = Utc::now().timestamp_micros();
         if let Some(stats_manager) = &mut *STATISTICS_MANAGER.lock() {
             c = stats_manager.EyeNexus_controller_c;
             let last_change = stats_manager.last_change_time;
-            let last_action =stats_manager.last_action;
-            
+            let last_action = stats_manager.last_action;
+
             // EyeNexus-Network Monitoring: Handle feedback timeout (Sec 3.5.2)
             // If no feedback is received for a certain interval (timeout), apply a sharper multiplicative decrease.
-            if (now - last_change) > ((1.*1000.*1000./72.*2.) as i64) && last_action == 0{
-                c = c*0.85; // beta_t = 0.85 for timeout
-
+            if (now - last_change) > ((1. * 1000. * 1000. / 72. * 2.) as i64) && last_action == 0 {
+                c = c * 0.85; // beta_t = 0.85 for timeout
             }
-            if c < 2.{
+            if c < 2. {
                 c = 2.;
             }
             stats_manager.EyeNexus_controller_c = c;
         }
-        c
-    } 
+        // EyeNexus: C_effective = f(controller_c, gaze_variance, fixation_confidence, gaze_velocity); keep within C_min/C_max
+        let mgr = BITRATE_MANAGER.lock();
+        let gaze_variance = mgr.get_gaze_variance_magnitude();
+        let fixation_confidence = mgr.get_fixation_confidence();
+        let gaze_velocity = mgr.get_gaze_velocity_magnitude();
+        let last_decode_latency_ms = mgr.get_last_decode_latency_ms();
+        let baseline = *DECODE_LATENCY_BASELINE_EWMA.lock();
+        let (c_effective, predictive_delta_was_applied) = congestion_controller::compute_c_effective(
+            c,
+            gaze_variance,
+            fixation_confidence,
+            gaze_velocity,
+            last_decode_latency_ms,
+            baseline,
+        );
+        if !predictive_delta_was_applied {
+            if let Some(lat) = last_decode_latency_ms {
+                let mut base = DECODE_LATENCY_BASELINE_EWMA.lock();
+                *base = Some(match *base {
+                    Some(b) => b * (1.0 - DECODE_LATENCY_BASELINE_EWMA_ALPHA)
+                        + lat * DECODE_LATENCY_BASELINE_EWMA_ALPHA,
+                    None => lat,
+                });
+            }
+        }
+        c_effective
+    }
+
+    /// Fills the EyeNexus encoder params struct for the C++ encoder.
+    /// Passes gaze_variance and optionally fixation_confidence (approximated from variance when device confidence not available).
+    extern "C" fn get_eyenexus_encoder_params(out: *mut FfiEyeNexusEncoderParams) {
+        if out.is_null() {
+            return;
+        }
+        let mut c = 2.0f32;
+        let now = Utc::now().timestamp_micros();
+        if let Some(stats_manager) = &mut *STATISTICS_MANAGER.lock() {
+            c = stats_manager.EyeNexus_controller_c;
+            let last_change = stats_manager.last_change_time;
+            let last_action = stats_manager.last_action;
+            if (now - last_change) > ((1.0 * 1000.0 * 1000.0 / 72.0 * 2.0) as i64) && last_action == 0 {
+                c = c * 0.85;
+            }
+            if c < 2.0 {
+                c = 2.0;
+            }
+            stats_manager.EyeNexus_controller_c = c;
+        }
+        let mgr = BITRATE_MANAGER.lock();
+        let gaze_variance_mag = mgr.get_gaze_variance_magnitude();
+        // Fixation confidence: device API if available, else proxy from inverse gaze variance (stable gaze ⇒ high confidence).
+        let fixation_confidence = mgr.get_fixation_confidence();
+        let gaze_velocity = mgr.get_gaze_velocity_magnitude();
+        let last_decode_latency_ms = mgr.get_last_decode_latency_ms();
+        let baseline = *DECODE_LATENCY_BASELINE_EWMA.lock();
+        let (c_effective, predictive_delta_was_applied) =
+            congestion_controller::compute_c_effective(
+                c,
+                gaze_variance_mag,
+                fixation_confidence,
+                gaze_velocity,
+                last_decode_latency_ms,
+                baseline,
+            );
+        if !predictive_delta_was_applied {
+            if let Some(lat) = last_decode_latency_ms {
+                let mut base = DECODE_LATENCY_BASELINE_EWMA.lock();
+                *base = Some(match *base {
+                    Some(b) => b * (1.0 - DECODE_LATENCY_BASELINE_EWMA_ALPHA)
+                        + lat * DECODE_LATENCY_BASELINE_EWMA_ALPHA,
+                    None => lat,
+                });
+            }
+        }
+        // Gaze variance as f32 for C++; use -1.0 when unavailable.
+        let gaze_variance_f32 = gaze_variance_mag.map(|v| v as f32).unwrap_or(-1.0);
+        // Fixation confidence for C++ and logging: [0, 1] or -1 when unavailable.
+        let fixation_confidence_f32 = fixation_confidence.unwrap_or(-1.0);
+        unsafe {
+            *out = FfiEyeNexusEncoderParams {
+                c_effective,
+                gaze_variance: gaze_variance_f32,
+                fixation_confidence: fixation_confidence_f32,
+            };
+        }
+        *LAST_EYENEXUS_LOG_PARAMS.lock() = Some((c, c_effective, fixation_confidence_f32));
+    }
 
     extern "C" fn wait_for_vsync() {
         if SERVER_DATA_MANAGER
@@ -502,6 +592,7 @@ pub unsafe extern "C" fn HmdDriverFactory(
     GetEyeGazeLocationRightX = Some(get_eye_gaze_location_right_x);
     GetEyeGazeLocationRightY = Some(get_eye_gaze_location_right_y);
     GetControllerC = Some(get_controller_c);
+    GetEyeNexusEncoderParams = Some(get_eyenexus_encoder_params);
 
     WaitForVSync = Some(wait_for_vsync);
     GetEyeGazeData = Some(get_eye_gaze_data);

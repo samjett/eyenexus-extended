@@ -407,6 +407,8 @@ fn stream_input_pipeline(
         ),
         htc_eye_expression: interaction::get_htc_eye_expression(&interaction_ctx.face_sources),
         htc_lip_expression: interaction::get_htc_lip_expression(&interaction_ctx.face_sources),
+        // Fixation confidence from eye tracker when available (e.g. OpenXR); None if not provided.
+        fixation_confidence: None,
     };
     
     alvr_client_core::send_tracking(Tracking {

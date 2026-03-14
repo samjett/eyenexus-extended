@@ -12,6 +12,7 @@
 #pragma once
 
 #include <vector>
+#include "alvr_server/bindings.h"
 #include "alvr_server/nvEncodeAPI.h"
 #include <stdint.h>
 #include <mutex>
@@ -256,15 +257,15 @@ public:
     *  @brief This function returns the number of allocated buffers.
     */
     uint32_t GetEncoderBufferCount() const { return m_nEncoderBuffer; }
-    void GenQPDeltaMap(int leftX, int leftY, int rightX, int rightY, uint64_t targetTimestampNs, float c);
+    void GenQPDeltaMap(int leftX, int leftY, int rightX, int rightY, uint64_t targetTimestampNs, const FfiEyeNexusEncoderParams& params);
 
     int CalculateQPValue_leftEye(int i, int j);
 
     int CalculateQPValue_rightEye(int i, int j);
 
-    int EyeNexus_CalculateQPOffsetValue_leftEye(int i, int j, float c);
+    int EyeNexus_CalculateQPOffsetValue_leftEye(int i, int j, float c_effective);
 
-    int EyeNexus_CalculateQPOffsetValue_rightEye(int i, int j, float c);
+    int EyeNexus_CalculateQPOffsetValue_rightEye(int i, int j, float c_effective);
 
     void reencode_qp_map();
 
@@ -480,6 +481,8 @@ private:
     int m_leftY=-1;
     int m_rightX=-1;
     int m_rightY=-1;
+    /** Previous c_effective; used to trigger QP map recompute when c_effective changes (e.g. gaze variance). */
+    float m_prev_c_effective = -1.f;
     // EyeNexus :: Foveated spatial decompression variable. Part of the value, which is independent of the gaze position, is hard-coded. Detail can refer Appendix E.
     float c0_x = 0.2761195;//no change
     float c1_x = 0.2910448;

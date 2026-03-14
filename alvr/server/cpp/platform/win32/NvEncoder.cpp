@@ -643,16 +643,16 @@ int NvEncoder::CalculateQPValue_rightEye(int i, int j){
     int qp = static_cast<double>(this->QO_Max) * (1.0f - exp(-(nominator/denominator)));
     return qp;
 }
-int NvEncoder::EyeNexus_CalculateQPOffsetValue_leftEye(int i, int j, float c){
+int NvEncoder::EyeNexus_CalculateQPOffsetValue_leftEye(int i, int j, float c_effective){
     double nominator = (pow((i-m_leftX),2) + pow((j-m_leftY),2));
-    double denominator = 2 * pow(c,2);
+    double denominator = 2 * pow(static_cast<double>(c_effective), 2);
     int qp = this->MAX_QP_OFFSET - (this->MAX_QP_OFFSET*exp(-(nominator/denominator)));
     return qp;
 }
 
-int NvEncoder::EyeNexus_CalculateQPOffsetValue_rightEye(int i, int j, float c){
+int NvEncoder::EyeNexus_CalculateQPOffsetValue_rightEye(int i, int j, float c_effective){
     double nominator = (pow((i-m_rightX),2) + pow((j-m_rightY),2));
-    double denominator = 2 * pow(c,2);
+    double denominator = 2 * pow(static_cast<double>(c_effective), 2);
     int qp = this->MAX_QP_OFFSET - (this->MAX_QP_OFFSET*exp(-(nominator/denominator)));
     return qp;
 }
@@ -668,8 +668,12 @@ void NvEncoder::reencode_qp_map(){
     }
 }
 
-// EyeNexus:: Generate QP offset Map based on the gaze location, here the input is X_o, Y_o
-void NvEncoder::GenQPDeltaMap(int leftX, int leftY, int rightX, int rightY, uint64_t targetTimestampNs, float controller_c){
+// EyeNexus:: Generate QP offset Map based on the gaze location, here the input is X_o, Y_o.
+// params.c_effective is used for the Gaussian; params.gaze_variance and params.fixation_confidence
+// are available for future use (e.g. Option B: multiplicative factor to QO).
+static const float C_EFF_CHANGE_THRESHOLD = 1.0f;  // Recompute QP map when c_effective changes by more than this
+
+void NvEncoder::GenQPDeltaMap(int leftX, int leftY, int rightX, int rightY, uint64_t targetTimestampNs, const FfiEyeNexusEncoderParams& params){
 
     //initialize QP offset map
     bool changed = false;
@@ -724,37 +728,42 @@ void NvEncoder::GenQPDeltaMap(int leftX, int leftY, int rightX, int rightY, uint
     int r_rightX = (decompress_x(rightX)+15)/16;//-map_width
     int r_rightY = (decompress_y(rightY)+15)/16;
     changed = changed || (r_leftX!=m_leftX) || (r_leftY!=m_leftY) || (r_rightX!=m_rightX) || (r_rightY!=m_rightY);
-    m_leftX = r_leftX; 
+    m_leftX = r_leftX;
     m_leftY = r_leftY;
     m_rightX = r_rightX;
     m_rightY = r_rightY;
     this->W = map_width*2/12;
 
-    float c = 2.;
-    c = controller_c;
+    // C_effective from Rust (combines network controller_c with gaze variance); fallback if invalid
+    float c_effective = (params.c_effective > 0.f) ? params.c_effective : 2.f;
+
+    // Recompute QP map when c_effective changes (e.g. gaze variance / predictive Gaussian), not only when gaze position changes
+    changed = changed || (std::fabs(params.c_effective - m_prev_c_effective) > C_EFF_CHANGE_THRESHOLD);
 
     if(changed){
 
 
-        if (c==0.0){
+        if (c_effective <= 0.f){
             for(int i = 0; i < map_height; i++){
-                for(int j = 0; j < map_width*2; j++){    
+                for(int j = 0; j < map_width*2; j++){
                     qp_map[i*map_width*2+j] = static_cast<int8_t>(24);
                 }
             }
         }
         else{
             for(int i = 0; i < map_height; i++){
-                for(int j = 0; j < map_width*2; j++){    
+                for(int j = 0; j < map_width*2; j++){
 
-                    int qp_offset_basedOnLeft = EyeNexus_CalculateQPOffsetValue_leftEye(j,i,c);
-                    int qp_offset_basedOnRight = EyeNexus_CalculateQPOffsetValue_rightEye(j,i,c);
+                    int qp_offset_basedOnLeft = EyeNexus_CalculateQPOffsetValue_leftEye(j,i,c_effective);
+                    int qp_offset_basedOnRight = EyeNexus_CalculateQPOffsetValue_rightEye(j,i,c_effective);
                     int final_qp_offset = (((qp_offset_basedOnLeft) < (qp_offset_basedOnRight)) ? (qp_offset_basedOnLeft) : (qp_offset_basedOnRight));
                     qp_map[i*map_width*2+j] = static_cast<int8_t>(final_qp_offset);
                 }
             }
         }
     }
+
+    m_prev_c_effective = c_effective;
      
 }
 

@@ -199,7 +199,7 @@ double (*GetEyeGazeLocationLeftY)();
 double (*GetEyeGazeLocationRightX)();
 double (*GetEyeGazeLocationRightY)();
 float (*GetControllerC)();
-
+void (*GetEyeNexusEncoderParams)(FfiEyeNexusEncoderParams *out);
 
 unsigned long long (*GetSerialNumber)(unsigned long long deviceID, char *outString);
 void (*SetOpenvrProps)(unsigned long long deviceID);

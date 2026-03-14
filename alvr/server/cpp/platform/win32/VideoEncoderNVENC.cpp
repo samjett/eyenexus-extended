@@ -1,6 +1,7 @@
 #include "VideoEncoderNVENC.h"
 #include "NvCodecUtils.h"
 
+#include "alvr_server/bindings.h"
 #include "alvr_server/Logger.h"
 #include "alvr_server/Settings.h"
 #include "alvr_server/Utils.h"
@@ -111,9 +112,10 @@ void VideoEncoderNVENC::Transmit(ID3D11Texture2D *pTexture, uint64_t presentatio
 		m_NvNecoder->Reconfigure(&reconfigureParams);
 	}
 
-	// EyeNexus-Gaze-Driven Video Encoding: Generate QP offset map based on the gaze location and foveation control parameter.
-	float c = GetControllerC();
-	m_NvNecoder->GenQPDeltaMap(leftx,lefty,rightx,righty,targetTimestampNs,c);// QP offset map is generated based on the gaze location and foveation control parameter.
+	// EyeNexus-Gaze-Driven Video Encoding: Generate QP offset map from gaze, C_effective, gaze_variance, and optional fixation_confidence.
+	FfiEyeNexusEncoderParams eyenexusParams;
+	GetEyeNexusEncoderParams(&eyenexusParams);
+	m_NvNecoder->GenQPDeltaMap(leftx, lefty, rightx, righty, targetTimestampNs, eyenexusParams);
 	
 	std::vector<std::vector<uint8_t>> vPacket;
 
@@ -135,7 +137,7 @@ void VideoEncoderNVENC::Transmit(ID3D11Texture2D *pTexture, uint64_t presentatio
 			fpOut.write(reinterpret_cast<char*>(packet.data()), packet.size());
 		}
 		last_encoded_size = (int)packet.size();
-		ParseFrameNals(m_codec, packet.data(), (int)packet.size(), targetTimestampNs, insertIDR, header_centerShiftX, header_centerShiftY,c);
+		ParseFrameNals(m_codec, packet.data(), (int)packet.size(), targetTimestampNs, insertIDR, header_centerShiftX, header_centerShiftY, eyenexusParams.c_effective);
 	}
 }
 

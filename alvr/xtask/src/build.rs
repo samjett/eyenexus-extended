@@ -122,7 +122,15 @@ pub fn build_streamer(
         None
     };
 
-    sh.remove_path(afs::streamer_build_dir()).unwrap();
+    if let Err(e) = sh.remove_path(afs::streamer_build_dir()) {
+        let msg = e.to_string();
+        eprintln!("error: could not remove build directory {}: {}", afs::streamer_build_dir().display(), msg);
+        if msg.contains("Access is denied") || msg.contains("error 5") {
+            eprintln!();
+            eprintln!("Close ALVR Streamer, any File Explorer window or terminal using that folder, then try again.");
+        }
+        panic!("build failed");
+    }
     sh.create_dir(build_layout.openvr_driver_lib_dir()).unwrap();
     sh.create_dir(&build_layout.executables_dir).unwrap();
 

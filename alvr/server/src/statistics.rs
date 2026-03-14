@@ -38,7 +38,11 @@ pub struct HistoryFrame {
     layers_count : i32,
     MTP_reported: bool,
     frame_c_MTP: f32,
-    frame_c: f32
+    frame_c: f32,
+    frame_controller_c_MTP: f32,
+    frame_controller_c: f32,
+    frame_fixation_confidence_MTP: f32,
+    frame_fixation_confidence: f32,
 }
 
 impl Default for HistoryFrame {
@@ -72,7 +76,10 @@ impl Default for HistoryFrame {
             MTP_reported: false,
             frame_c_MTP: 188.,
             frame_c: 188.,
-            
+            frame_controller_c_MTP: 188.,
+            frame_controller_c: 188.,
+            frame_fixation_confidence_MTP: -1.,
+            frame_fixation_confidence: -1.,
         }
     }
 }
@@ -82,7 +89,7 @@ struct BatteryData {
     gauge_value: f32,
     is_plugged: bool,
 }
-fn write_latency_to_csv(filename: &str, latency_values: [String; 41]) -> Result<(), Box<dyn Error>> {
+fn write_latency_to_csv(filename: &str, latency_values: [String; 43]) -> Result<(), Box<dyn Error>> {
 
     let mut file = OpenOptions::new().write(true).append(true).open(filename)?;
     let mut writer = Writer::from_writer(file);
@@ -99,7 +106,6 @@ fn write_latency_to_csv(filename: &str, latency_values: [String; 41]) -> Result<
         &latency_values[7],
         &latency_values[8],
         &latency_values[9],
-
         &latency_values[10],
         &latency_values[11],
         &latency_values[12],
@@ -131,13 +137,8 @@ fn write_latency_to_csv(filename: &str, latency_values: [String; 41]) -> Result<
         &latency_values[38],
         &latency_values[39],
         &latency_values[40],
-        // &latency_values[41],
-        // &latency_values[42],
-        // &latency_values[43],
-        // &latency_values[44],
-        // &latency_values[45],
-        // &latency_values[46],
-        // &latency_values[47],
+        &latency_values[41],
+        &latency_values[42],
 
 
 
@@ -148,7 +149,7 @@ fn write_latency_to_csv(filename: &str, latency_values: [String; 41]) -> Result<
 
     Ok(())
 }
-fn write_MTP_latency_to_csv(filename: &str, latency_values: [String; 18]) -> Result<(), Box<dyn Error>> {
+fn write_MTP_latency_to_csv(filename: &str, latency_values: [String; 20]) -> Result<(), Box<dyn Error>> {
     let mut file = OpenOptions::new().write(true).append(true).open(filename)?;
     let mut writer = Writer::from_writer(file);
     writer.write_record(&[
@@ -170,8 +171,8 @@ fn write_MTP_latency_to_csv(filename: &str, latency_values: [String; 18]) -> Res
         &latency_values[15],
         &latency_values[16],
         &latency_values[17],
-
-
+        &latency_values[18],
+        &latency_values[19],
     ])?;
 
     Ok(())
@@ -303,11 +304,14 @@ impl StatisticsManager {
     }
 
     // returns encoding interval
+    /// c_effective is the value used for encoding (passed from C++). controller_c and fixation_confidence are for logging (from LAST_EYENEXUS_LOG_PARAMS).
     pub fn report_frame_encoded(
         &mut self,
         target_timestamp: Duration,
         bytes_count: usize,
-        c: f32,
+        c_effective: f32,
+        controller_c: f32,
+        fixation_confidence: f32,
     ) -> Duration {
         self.video_packets_total += 1;
         self.video_packets_partial_sum += 1;
@@ -319,18 +323,20 @@ impl StatisticsManager {
             .iter_mut()
             .find(|frame| frame.target_timestamp == target_timestamp)
         {
-            if frame.encode_times == 0{
+            if frame.encode_times == 0 {
                 frame.frame_encoded_MTP = Instant::now();
                 frame.video_packet_bytes_MTP = bytes_count;
-                frame.frame_c_MTP = c;
+                frame.frame_c_MTP = c_effective;
+                frame.frame_controller_c_MTP = controller_c;
+                frame.frame_fixation_confidence_MTP = fixation_confidence;
                 let _ = frame.frame_encoded_MTP.saturating_duration_since(frame.frame_composed_MTP);
             }
             frame.frame_encoded = Instant::now();
-            //let times = frame.encode_times;
-            //warn!("frame times: {times} with size {bytes_count}");
             frame.video_packet_bytes = bytes_count;
-            frame.encode_times +=1;
-            frame.frame_c = c;
+            frame.encode_times += 1;
+            frame.frame_c = c_effective;
+            frame.frame_controller_c = controller_c;
+            frame.frame_fixation_confidence = fixation_confidence;
 
             frame.frame_encoded.saturating_duration_since(frame.frame_composed)
         } else {
@@ -440,7 +446,9 @@ impl StatisticsManager {
                 let mut interval_total_pipeline=(frame.total_pipeline_latency_MTP.as_secs_f32() * 1000.).to_string();//total pipeline latency wz repeat
                 let encoded_frame_size = frame.video_packet_bytes_MTP.to_string();
                 let experiment_target_timestamp=Local::now().format("%Y%m%d_%H%M%S").to_string();
-                let controller_string = frame.frame_c_MTP.to_string();
+                let c_string = frame.frame_controller_c_MTP.to_string();
+                let c_effective_string = frame.frame_c_MTP.to_string();
+                let fixation_confidence_string = frame.frame_fixation_confidence_MTP.to_string();
                 let latency_strings = [
                     timestamp_for_this_frame,
                     interval_trackingReceived_framePresentInVirtualDevice,
@@ -457,8 +465,10 @@ impl StatisticsManager {
                     client_fps.to_string(),
                     bitrate_mbps,
                     recv_bitrate_mbps,
-                    controller_string,
+                    c_string,
+                    c_effective_string,
                     gaze_variance_magnitude,
+                    fixation_confidence_string,
                     experiment_target_timestamp,
                 ];
                 write_MTP_latency_to_csv("statistics_mtp.csv", latency_strings);
@@ -638,7 +648,9 @@ impl StatisticsManager {
             let mut frame_arrival_ts=client_stats.frame_arrival_timestamp.to_string();
             let mut server_fps=server_fps.to_string();
             let mut client_fps=client_fps.to_string();
-            let mut controller_c = frame.frame_c.to_string();
+            let mut controller_c = frame.frame_controller_c.to_string();
+            let mut c_effective = frame.frame_c.to_string();
+            let mut fixation_confidence = frame.frame_fixation_confidence.to_string();
             let mut current_state = "normal".to_string(); 
             let mut modified_trend = EYENEXUS_MANAGER.lock().trendline_manager.current_trend_for_testing.to_string();
             let mut threshold = EYENEXUS_MANAGER.lock().trendline_manager.current_threshold_for_testing.to_string();
@@ -670,7 +682,7 @@ impl StatisticsManager {
             }
             let latency_strings=[timestamp_for_this_frame,interval_trackingReceived_framePresentInVirtualDevice,interval_framePresentInVirtualDevice_frameComposited,interval_frameComposited_VideoEncoded,interval_VideoReceivedByClient_VideoDecoded,interval_network,
             client_dequeue_latency,client_rendering_latency,client_vsync_queue_latency,interval_total_pipeline,bitrate_statistics,total_size_for_this_encoded_frame_bytes,frame_send_ts,
-            frame_arrival_ts,server_fps,client_fps,controller_c,current_state,current_action,modified_trend,threshold,send_ts_delta.to_string(),arrival_ts_delta.to_string(),delta_ts,recv_times,client_stats.had_pkt_loss.to_string(),client_stats.push_decode_failed.to_string(),bitrate_mbps,experiment_target_timestamp
+            frame_arrival_ts,server_fps,client_fps,controller_c,c_effective,fixation_confidence,current_state,current_action,modified_trend,threshold,send_ts_delta.to_string(),arrival_ts_delta.to_string(),delta_ts,recv_times,client_stats.had_pkt_loss.to_string(),client_stats.push_decode_failed.to_string(),bitrate_mbps,experiment_target_timestamp
             ,frame.tracking_rece_times.to_string(),frame.frame_present_times.to_string(),frame.composition_times.to_string(),frame.encode_times.to_string(),frame.send_times.to_string(),frame.tracking_received.saturating_duration_since(self.start_time).as_nanos().to_string(),frame.layers_count.to_string(),link_capacity_c,link_capacity_c_lower,link_capacity_c_upper,self.last_action.to_string(),self.last_change_time.to_string()];
             write_latency_to_csv("statistics_debug_usage.csv", latency_strings);
             //debug usage block (can not be used for statistics but can be used for debug) please ignore this part of code

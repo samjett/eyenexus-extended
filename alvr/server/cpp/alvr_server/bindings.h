@@ -77,6 +77,14 @@ struct FfiDynamicEncoderParams {
     float framerate;
 };
 
+// EyeNexus: parameters for gaze-contingent QP map (passed to C++ encoder).
+// fixation_confidence < 0 means not available (e.g. not from device).
+struct FfiEyeNexusEncoderParams {
+    float c_effective;           // combined network + gaze C for Gaussian
+    float gaze_variance;        // variance magnitude (e.g. pixel^2), or -1 if unavailable
+    float fixation_confidence;  // [0, 1] from device, or < 0 if not available
+};
+
 extern "C" const unsigned char *FRAME_RENDER_VS_CSO_PTR;
 extern "C" unsigned int FRAME_RENDER_VS_CSO_LEN;
 extern "C" const unsigned char *FRAME_RENDER_PS_CSO_PTR;
@@ -128,6 +136,7 @@ extern "C" double (*GetEyeGazeLocationLeftY)();
 extern "C" double (*GetEyeGazeLocationRightX)();
 extern "C" double (*GetEyeGazeLocationRightY)();
 extern "C" float (*GetControllerC)();
+extern "C" void (*GetEyeNexusEncoderParams)(FfiEyeNexusEncoderParams *out);
 extern "C" unsigned long long (*GetSerialNumber)(unsigned long long deviceID, char *outString);
 extern "C" void (*SetOpenvrProps)(unsigned long long deviceID);
 extern "C" void (*RegisterButtons)(unsigned long long deviceID);

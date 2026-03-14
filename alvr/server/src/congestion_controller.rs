@@ -406,5 +406,129 @@ impl EyeNexus_Controller {
         }
         return self.controller_c;
     }
-    
+}
+
+// EyeNexus: C_effective = f(controller_c, gaze_variance, fixation_confidence) for gaze-contingent foveation.
+// High gaze variance (looking around) → larger C_effective (wider fovea, less aggressive periphery).
+// Low gaze variance (fixation) → smaller C_effective (tighter fovea, more aggressive periphery).
+// High fixation_confidence (stable fixation) → further reduces C_effective (tighter fovea); low or unavailable → no change.
+// Result is clamped to [C_MIN, C_MAX] so network congestion can still reduce C.
+
+/// Minimum and maximum foveation controller C (same as AIMD clamp in EyeNexus_Controller).
+pub const C_MIN: f32 = 2.0;
+pub const C_MAX: f32 = 80.0;
+
+/// Variance magnitude (pixel²) below which we treat gaze as stable (fixation).
+const GAZE_VARIANCE_LOW: f64 = 100.0;
+/// Variance magnitude (pixel²) above which we treat gaze as high motion.
+const GAZE_VARIANCE_HIGH: f64 = 10_000.0;
+/// Max additive adjustment to C from gaze (so network still dominates on congestion).
+const GAZE_C_DELTA: f32 = 15.0;
+/// Weight for fixation_confidence: high confidence scales C_effective down (tighter fovea). At conf=1, C_eff *= (1 - this).
+const FIXATION_CONFIDENCE_WEIGHT: f32 = 0.15;
+
+// Predictive Gaussian: when gaze variance or velocity is above threshold, widen C_effective so that
+// after a saccade the new fovea region is already encoded with better quality (pre-emptive softening).
+// Uses a smooth linear ramp between low and high thresholds instead of a binary step.
+/// Variance magnitude (pixel²) at which predictive ramp starts (below this: no widening).
+const PREDICTIVE_VARIANCE_LOW: f64 = 1_000.0;
+/// Variance magnitude (pixel²) at which predictive ramp reaches full strength (same scale as GAZE_VARIANCE_HIGH).
+const PREDICTIVE_VARIANCE_HIGH: f64 = 5_000.0;
+/// Velocity magnitude (pixels per sample) at which predictive ramp starts.
+const PREDICTIVE_VELOCITY_LOW: f64 = 10.0;
+/// Velocity magnitude (pixels per sample) at which predictive ramp reaches full strength (e.g. saccade).
+const PREDICTIVE_VELOCITY_HIGH: f64 = 30.0;
+/// Maximum extra C from predictive widening (ramp factor in [0,1] scales this); clamped so C_effective ≤ C_MAX.
+const PREDICTIVE_C_DELTA_MAX: f32 = 8.0;
+
+/// Max additional decode latency (ms) allowed from predictive Gaussian widening. If current decode
+/// latency exceeds baseline by more than this, the predictive delta is suppressed (feedback loop).
+pub const PREDICTIVE_LATENCY_BUDGET_MS: f32 = 1.5;
+
+// Feature toggles for ablation: set to false to disable each gaze feature independently.
+/// When true, C_effective is modulated by gaze variance (high variance → larger C, low → smaller C).
+pub const ENABLE_GAZE_VARIANCE_MODULATION: bool = false;
+/// When true, fixation_confidence scales C_effective down (high confidence → tighter fovea).
+pub const ENABLE_FIXATION_CONFIDENCE: bool = true;
+/// When true, predictive Gaussian widening is applied when gaze variance/velocity is high.
+pub const ENABLE_PREDICTIVE_GAUSSIAN: bool = false;
+
+/// Returns (gaze_variance_modulation, fixation_confidence, predictive_gaussian) for CSV metadata logging.
+pub fn get_eyenexus_feature_toggles() -> (bool, bool, bool) {
+    (
+        ENABLE_GAZE_VARIANCE_MODULATION,
+        ENABLE_FIXATION_CONFIDENCE,
+        ENABLE_PREDICTIVE_GAUSSIAN,
+    )
+}
+
+/// Combines network controller_c with gaze variance and optional fixation_confidence to produce C_effective.
+/// When gaze_variance_magnitude is None (no data), returns controller_c unchanged (fixation_confidence still applied if Some).
+/// fixation_confidence: [0, 1] from device or proxy (e.g. 1/(1+variance)); None or <0 means not available.
+/// Applies predictive Gaussian with a smooth linear ramp: variance/velocity between LOW and HIGH thresholds
+/// produce a ramp factor in [0,1]; predictive_delta = PREDICTIVE_C_DELTA_MAX * max(var_factor, vel_factor).
+/// If decode latency exceeds baseline + PREDICTIVE_LATENCY_BUDGET_MS, the predictive delta is suppressed.
+///
+/// Returns (c_effective, predictive_delta_was_applied). The caller should update decode_latency_baseline_ewma
+/// only when predictive_delta_was_applied is false (so baseline tracks latency when predictive widening is inactive).
+pub fn compute_c_effective(
+    controller_c: f32,
+    gaze_variance_magnitude: Option<f64>,
+    fixation_confidence: Option<f32>,
+    gaze_velocity_magnitude: Option<f64>,
+    last_decode_latency_ms: Option<f32>,
+    decode_latency_baseline_ms: Option<f32>,
+) -> (f32, bool) {
+    let c_from_variance = if ENABLE_GAZE_VARIANCE_MODULATION {
+        match gaze_variance_magnitude {
+            None => controller_c,
+            Some(v) => {
+                let normalized = if v <= GAZE_VARIANCE_LOW {
+                    0.0
+                } else if v >= GAZE_VARIANCE_HIGH {
+                    1.0
+                } else {
+                    (v - GAZE_VARIANCE_LOW) / (GAZE_VARIANCE_HIGH - GAZE_VARIANCE_LOW)
+                };
+                let delta = (2.0 * normalized - 1.0) as f32 * GAZE_C_DELTA;
+                (controller_c + delta).clamp(C_MIN, C_MAX)
+            }
+        }
+    } else {
+        controller_c
+    };
+    // Plug fixation_confidence into C_eff: high confidence → smaller C (tighter fovea).
+    let mut c_effective = if ENABLE_FIXATION_CONFIDENCE {
+        match fixation_confidence {
+            Some(conf) if conf >= 0.0 && conf <= 1.0 => {
+                let scale = 1.0 - FIXATION_CONFIDENCE_WEIGHT * conf;
+                (c_from_variance * scale).clamp(C_MIN, C_MAX)
+            }
+            _ => c_from_variance,
+        }
+    } else {
+        c_from_variance
+    };
+    // Predictive Gaussian: smooth linear ramp from variance/velocity (between LOW and HIGH) to predictive delta.
+    // When gaze is moving, widen C so the region that might become the next fovea is already higher quality.
+    // Cap by decode latency: if decode latency exceeds baseline by more than PREDICTIVE_LATENCY_BUDGET_MS, suppress the delta.
+    let var_factor = gaze_variance_magnitude.map_or(0.0, |v| {
+        ((v - PREDICTIVE_VARIANCE_LOW) / (PREDICTIVE_VARIANCE_HIGH - PREDICTIVE_VARIANCE_LOW)).clamp(0.0, 1.0)
+    });
+    let vel_factor = gaze_velocity_magnitude.map_or(0.0, |vel| {
+        ((vel - PREDICTIVE_VELOCITY_LOW) / (PREDICTIVE_VELOCITY_HIGH - PREDICTIVE_VELOCITY_LOW)).clamp(0.0, 1.0)
+    });
+    let predictive_delta = PREDICTIVE_C_DELTA_MAX * (var_factor.max(vel_factor) as f32);
+    let mut predictive_delta_was_applied = false;
+    if ENABLE_PREDICTIVE_GAUSSIAN && predictive_delta > 0.0 {
+        let latency_over_budget = match (last_decode_latency_ms, decode_latency_baseline_ms) {
+            (Some(current), Some(baseline)) => current > baseline + PREDICTIVE_LATENCY_BUDGET_MS,
+            _ => false,
+        };
+        if !latency_over_budget {
+            c_effective = (c_effective + predictive_delta).min(C_MAX);
+            predictive_delta_was_applied = true;
+        }
+    }
+    (c_effective.clamp(C_MIN, C_MAX), predictive_delta_was_applied)
 }

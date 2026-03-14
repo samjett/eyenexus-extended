@@ -1,5 +1,16 @@
 use crate::{
-    bitrate::{self, BitrateManager}, congestion_controller::EyeNexus_Controller, face_tracking::FaceTrackingSink, hand_gestures::{trigger_hand_gesture_actions, HandGestureManager, HAND_GESTURE_BUTTON_SET}, haptics, input_mapping::ButtonMappingManager, sockets::WelcomeSocket, statistics::StatisticsManager, tracking::{self, TrackingManager}, FfiFov, FfiViewsConfig, VideoPacket, BITRATE_MANAGER, DECODER_CONFIG, EYENEXUS_MANAGER, EYE_GAZE_DATA, LIFECYCLE_STATE, SERVER_DATA_MANAGER, STATISTICS_MANAGER, VIDEO_MIRROR_SENDER, VIDEO_RECORDING_FILE
+    bitrate::{self, BitrateManager},
+    congestion_controller::{self, EyeNexus_Controller},
+    face_tracking::FaceTrackingSink,
+    hand_gestures::{trigger_hand_gesture_actions, HandGestureManager, HAND_GESTURE_BUTTON_SET},
+    haptics,
+    input_mapping::ButtonMappingManager,
+    sockets::WelcomeSocket,
+    statistics::StatisticsManager,
+    tracking::{self, TrackingManager},
+    FfiFov, FfiViewsConfig, VideoPacket, BITRATE_MANAGER, DECODER_CONFIG, EYENEXUS_MANAGER,
+    EYE_GAZE_DATA, LIFECYCLE_STATE, SERVER_DATA_MANAGER, STATISTICS_MANAGER, VIDEO_MIRROR_SENDER,
+    VIDEO_RECORDING_FILE,
 };
 use alvr_audio::AudioDevice;
 use alvr_common::{
@@ -95,6 +106,8 @@ fn create_csv_file_for_statistics(filename: &str) -> Result<(), Box<dyn Error>> 
             "server_fps(frame per second)",
             "client_fps(frame per second)",
             "C",
+            "C_effective",
+            "fixation_confidence",
             "current_state",
             "current_action",
             "modified_trend",
@@ -148,8 +161,18 @@ fn create_csv_file_for_MTP_statistics(filename: &str) -> Result<(), Box<dyn Erro
             "sending_bitrate_mbps",
             "recving_bitrate_mbps",
             "C",
+            "C_effective",
             "gaze_variance_magnitude",
+            "fixation_confidence",
             "experiment_target_timestamp",
+        ])?;
+        // Metadata row: feature toggles for evaluation scripts (skip rows where first column starts with #).
+        let (gv, fc, pg) = congestion_controller::get_eyenexus_feature_toggles();
+        writer.write_record(&[
+            "#eyenexus_toggles",
+            if gv { "1" } else { "0" },
+            if fc { "1" } else { "0" },
+            if pg { "1" } else { "0" },
         ])?;
     } else {
         println!("File '{}' already exists, skipping creation.", filename);
@@ -949,6 +972,8 @@ fn connection_pipeline(
                 if let Some(sink) = &mut face_tracking_sink {
                     let mut face_data = tracking.face_data;
                     face_data.eye_gazes = local_eye_gazes;// raw data of eye gaze in VR space.
+                    // Pass through device fixation confidence when client sends it (e.g. from eye tracker API).
+                    BITRATE_MANAGER.lock().set_device_fixation_confidence(face_data.fixation_confidence);
                     if let [Some(left), Some(right)] = face_data.eye_gazes {
                         // Gaze Yaw and Pitch for both eye are same, so only one is needed to compute gaze location.
                         let (left_pitch, left_yaw, _) = left.orientation.to_euler(EulerRot::XYZ);
@@ -1504,8 +1529,17 @@ pub extern "C" fn send_video(timestamp_ns: u64, buffer_ptr: *mut u8, len: i32, i
         }
 
         if let Some(stats) = &mut *STATISTICS_MANAGER.lock() {
-            let encoder_latency =
-                stats.report_frame_encoded(Duration::from_nanos(timestamp_ns), buffer_size,c);
+            let (controller_c, fixation_confidence) = match *crate::LAST_EYENEXUS_LOG_PARAMS.lock() {
+                Some((c_net, _c_eff, fix)) => (c_net, fix),
+                None => (c, -1.0),
+            };
+            let encoder_latency = stats.report_frame_encoded(
+                Duration::from_nanos(timestamp_ns),
+                buffer_size,
+                c,
+                controller_c,
+                fixation_confidence,
+            );
 
             BITRATE_MANAGER
                 .lock()

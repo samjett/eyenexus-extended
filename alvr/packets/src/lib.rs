@@ -107,6 +107,8 @@ pub struct FaceData {
     pub fb_face_expression: Option<Vec<f32>>, // issue: Serialize does not support [f32; 63]
     pub htc_eye_expression: Option<Vec<f32>>,
     pub htc_lip_expression: Option<Vec<f32>>, // issue: Serialize does not support [f32; 37]
+    /// Fixation confidence [0, 1] from eye tracker when available (e.g. OpenXR). None if not provided.
+    pub fixation_confidence: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize)]

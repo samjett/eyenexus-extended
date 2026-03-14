@@ -13,10 +13,13 @@ use std::collections::VecDeque;
 pub const DEFAULT_GAZE_HISTORY_SIZE: usize = 90;
 
 /// Sliding window of gaze points in screen space (x, y) and variance computation.
+/// Tracks velocity as Euclidean distance between consecutive pushes (pixels per sample).
 #[derive(Debug)]
 pub struct GazeHistory {
     samples: VecDeque<(f64, f64)>,
     max_len: usize,
+    /// Velocity magnitude from previous push to current (distance in pixels per sample).
+    last_velocity: Option<f64>,
 }
 
 impl GazeHistory {
@@ -25,14 +28,21 @@ impl GazeHistory {
         Self {
             samples: VecDeque::with_capacity(max_len),
             max_len,
+            last_velocity: None,
         }
     }
 
     /// Pushes a new gaze point (x, y) in screen space. Drops the oldest sample if at capacity.
     /// Typically (x, y) is the left-eye gaze position; both eyes can be averaged by the caller.
+    /// Velocity is set to Euclidean distance from the previous sample (pixels per sample).
     pub fn push(&mut self, x: f64, y: f64) {
         if self.max_len == 0 {
             return;
+        }
+        if let Some(&(px, py)) = self.samples.back() {
+            let dx = x - px;
+            let dy = y - py;
+            self.last_velocity = Some((dx * dx + dy * dy).sqrt());
         }
         if self.samples.len() >= self.max_len {
             self.samples.pop_front();
@@ -84,6 +94,13 @@ impl GazeHistory {
     pub fn std_dev(&self) -> Option<(f64, f64)> {
         self.variance().map(|(vx, vy)| (vx.sqrt(), vy.sqrt()))
     }
+
+    /// Velocity magnitude (Euclidean distance between the last two pushes).
+    /// Units: pixels per sample. Returns `None` if fewer than 2 samples.
+    /// Used for predictive Gaussian: high velocity triggers wider C_effective.
+    pub fn velocity_magnitude(&self) -> Option<f64> {
+        self.last_velocity
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +148,17 @@ mod tests {
         // Samples are (2,2), (3,3), (4,4) — variance 2/3 each
         assert!((vx - 2.0 / 3.0).abs() < 1e-10);
         assert!((vy - 2.0 / 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn gaze_history_velocity() {
+        let mut h = GazeHistory::new(10);
+        assert!(h.velocity_magnitude().is_none());
+        h.push(0.0, 0.0);
+        assert!(h.velocity_magnitude().is_none());
+        h.push(3.0, 4.0); // distance 5
+        assert!((h.velocity_magnitude().unwrap() - 5.0).abs() < 1e-10);
+        h.push(3.0, 4.0); // no movement
+        assert!((h.velocity_magnitude().unwrap()).abs() < 1e-10);
     }
 }

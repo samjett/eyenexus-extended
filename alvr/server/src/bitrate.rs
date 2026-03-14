@@ -32,6 +32,10 @@ pub struct BitrateManager {
     right_frame_x: f64,
     right_frame_y: f64,
     gaze_history: GazeHistory,
+    /// Fixation confidence [0, 1] from device/eye tracker when available; None when not provided.
+    device_fixation_confidence: Option<f32>,
+    /// Last reported decode latency (client video_decode) in ms, for predictive Gaussian latency capping.
+    last_decode_latency_ms: Option<f32>,
 }
 
 impl BitrateManager {
@@ -63,6 +67,8 @@ impl BitrateManager {
             right_frame_x: 3216.0,
             right_frame_y: 1168.0,
             gaze_history: GazeHistory::new(DEFAULT_GAZE_HISTORY_SIZE),
+            device_fixation_confidence: None,
+            last_decode_latency_ms: None,
         }
     }
 
@@ -118,6 +124,37 @@ impl BitrateManager {
         self.gaze_history.variance_magnitude()
     }
 
+    /// Gaze velocity magnitude (Euclidean distance between last two samples), pixels per sample.
+    /// Used for predictive Gaussian: high velocity widens C_effective.
+    pub fn get_gaze_velocity_magnitude(&self) -> Option<f64> {
+        self.gaze_history.velocity_magnitude()
+    }
+
+    /// Fixation confidence from device/eye tracker when available (e.g. OpenXR). None if not provided.
+    pub fn get_device_fixation_confidence(&self) -> Option<f32> {
+        self.device_fixation_confidence
+    }
+
+    /// Set fixation confidence from device. Call when client sends confidence (e.g. from eye tracker API).
+    pub fn set_device_fixation_confidence(&mut self, confidence: Option<f32>) {
+        self.device_fixation_confidence = confidence.and_then(|c| {
+            if c >= 0.0 && c <= 1.0 {
+                Some(c)
+            } else {
+                None
+            }
+        });
+    }
+
+    /// Returns fixation confidence to use: device value if available, else proxy from inverse gaze variance (stable gaze ⇒ high confidence).
+    /// Returns None when no data (no variance and no device confidence).
+    pub fn get_fixation_confidence(&self) -> Option<f32> {
+        if let Some(dev) = self.device_fixation_confidence {
+            return Some(dev);
+        }
+        self.gaze_history.variance_magnitude().map(|v| (1.0 / (1.0 + v as f32)).min(1.0))
+    }
+
     pub fn report_frame_encoded(
         &mut self,
         timestamp: Duration,
@@ -130,6 +167,11 @@ impl BitrateManager {
             .push_back((timestamp, size_bytes * 8));
     }
 
+    /// Last decode latency in ms (from client video_decode). Used for predictive Gaussian latency capping.
+    pub fn get_last_decode_latency_ms(&self) -> Option<f32> {
+        self.last_decode_latency_ms
+    }
+
     // decoder_latency is used to learn a suitable maximum bitrate bound to avoid decoder runaway
     // latency
     pub fn report_frame_latencies(
@@ -139,6 +181,8 @@ impl BitrateManager {
         network_latency: Duration,
         decoder_latency: Duration,
     ) {
+        self.last_decode_latency_ms = Some(decoder_latency.as_secs_f32() * 1000.0);
+
         if network_latency.is_zero() {
             return;
         }
