@@ -477,6 +477,13 @@ pub struct VideoConfig {
     #[schema(flag = "steamvr-restart")]
     pub foveated_encoding: Switch<FoveatedEncodingConfig>,
 
+    #[schema(flag = "real-time")]
+    pub fixation_confidence_enabled: bool,
+
+    #[schema(flag = "real-time")]
+    #[schema(gui(slider(min = 1.0, max = 2.5, step = 0.1)))]
+    pub fixation_confidence_exaggeration: f32,
+
     pub clientside_foveation: Switch<ClientsideFoveationConfig>,
 
     #[schema(flag = "steamvr-restart")]
@@ -1245,6 +1252,8 @@ pub fn session_settings_default() -> SettingsDefault {
                     edge_ratio_y: 5.,
                 },
             },
+            fixation_confidence_enabled: true,
+            fixation_confidence_exaggeration: 1.0,
             clientside_foveation: SwitchDefault {
                 enabled: true,
                 content: ClientsideFoveationConfigDefault {

@@ -52,9 +52,21 @@ The core logic resides in `alvr/server/src/congestion_controller.rs`:
 
 The timeout logic is handled in `alvr/server/src/lib.rs` inside `get_controller_c`.
 
+## Fixation-Confidence Fovea (demo tuning)
+
+When **fixation-confidence** is enabled, the foveal spread is modulated by gaze stability: stable gaze (low variance) increases effective $C$ (larger fovea), and noisy gaze decreases it. This is in addition to the network AIMD controller $C$.
+
+*   **Normal mode (default):** Set `fixation_confidence_exaggeration` to `1.0` for a subtle effect suitable for production.
+*   **Demo mode:** Increase `fixation_confidence_exaggeration` to make fovea-size changes more visible for demos:
+    *   **Mild:** `1.5`
+    *   **Clear:** `2.0`
+    *   **Very obvious:** `2.5` (staged demos only; may affect quality stability).
+
+**Expected effect:** The high-quality foveal region expands when you hold a fixation (high confidence) and contracts when gaze is moving (low confidence). Use **statistics_mtp.csv** columns `fixation_confidence` and `c_effective` to validate and tune live.
+
 ## CSV logging for analysis
 
 Gaze and gaze-variance data are written to CSVs in the same directory as other EyeNexus logs (e.g. SteamVR driver log directory, depending on process CWD):
 
 *   **eyegaze.csv** (per gaze sample): `target_ts`, `leftx`, `lefty`, `rightx`, `righty`, `gaze_var_x`, `gaze_var_y`, `gaze_variance_magnitude`. Variance is computed over the sliding window (see gaze history); empty when &lt; 2 samples.
-*   **statistics_mtp.csv** (per frame): same columns as before, plus `gaze_variance_magnitude` for frame-level analysis and plots.
+*   **statistics_mtp.csv** (per frame): latency and bitrate columns, plus `C`, `gaze_variance_magnitude`, `fixation_confidence`, and `c_effective` for frame-level analysis and demo tuning. When fixation-confidence is disabled, `fixation_confidence` is empty and `c_effective` equals `C`.

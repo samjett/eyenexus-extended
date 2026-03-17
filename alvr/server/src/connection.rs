@@ -149,6 +149,8 @@ fn create_csv_file_for_MTP_statistics(filename: &str) -> Result<(), Box<dyn Erro
             "recving_bitrate_mbps",
             "C",
             "gaze_variance_magnitude",
+            "fixation_confidence",
+            "c_effective",
             "experiment_target_timestamp",
         ])?;
     } else {
@@ -347,6 +349,8 @@ pub fn contruct_openvr_config(session: &SessionConfig) -> OpenvrConfig {
         foveation_center_shift_y,
         foveation_edge_ratio_x,
         foveation_edge_ratio_y,
+        fixation_confidence_enabled: settings.video.fixation_confidence_enabled,
+        fixation_confidence_exaggeration: settings.video.fixation_confidence_exaggeration,
         enable_color_correction,
         brightness,
         contrast,
@@ -1504,8 +1508,14 @@ pub extern "C" fn send_video(timestamp_ns: u64, buffer_ptr: *mut u8, len: i32, i
         }
 
         if let Some(stats) = &mut *STATISTICS_MANAGER.lock() {
-            let encoder_latency =
-                stats.report_frame_encoded(Duration::from_nanos(timestamp_ns), buffer_size,c);
+            let (fixation_confidence, c_effective) = crate::take_last_fixation_debug();
+            let encoder_latency = stats.report_frame_encoded(
+                Duration::from_nanos(timestamp_ns),
+                buffer_size,
+                c,
+                fixation_confidence,
+                c_effective,
+            );
 
             BITRATE_MANAGER
                 .lock()

@@ -480,6 +480,8 @@ private:
     int m_leftY=-1;
     int m_rightX=-1;
     int m_rightY=-1;
+    float m_prevControllerC = 0.0f;
+    bool m_hasPrevControllerC = false;
     // EyeNexus :: Foveated spatial decompression variable. Part of the value, which is independent of the gaze position, is hard-coded. Detail can refer Appendix E.
     float c0_x = 0.2761195;//no change
     float c1_x = 0.2910448;

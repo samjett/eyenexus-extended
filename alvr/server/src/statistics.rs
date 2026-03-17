@@ -38,7 +38,9 @@ pub struct HistoryFrame {
     layers_count : i32,
     MTP_reported: bool,
     frame_c_MTP: f32,
-    frame_c: f32
+    frame_c: f32,
+    pub fixation_confidence_MTP: Option<f32>,
+    pub c_effective_MTP: f32,
 }
 
 impl Default for HistoryFrame {
@@ -72,7 +74,8 @@ impl Default for HistoryFrame {
             MTP_reported: false,
             frame_c_MTP: 188.,
             frame_c: 188.,
-            
+            fixation_confidence_MTP: None,
+            c_effective_MTP: 0.,
         }
     }
 }
@@ -148,7 +151,7 @@ fn write_latency_to_csv(filename: &str, latency_values: [String; 41]) -> Result<
 
     Ok(())
 }
-fn write_MTP_latency_to_csv(filename: &str, latency_values: [String; 18]) -> Result<(), Box<dyn Error>> {
+fn write_MTP_latency_to_csv(filename: &str, latency_values: [String; 20]) -> Result<(), Box<dyn Error>> {
     let mut file = OpenOptions::new().write(true).append(true).open(filename)?;
     let mut writer = Writer::from_writer(file);
     writer.write_record(&[
@@ -170,8 +173,8 @@ fn write_MTP_latency_to_csv(filename: &str, latency_values: [String; 18]) -> Res
         &latency_values[15],
         &latency_values[16],
         &latency_values[17],
-
-
+        &latency_values[18],
+        &latency_values[19],
     ])?;
 
     Ok(())
@@ -308,6 +311,8 @@ impl StatisticsManager {
         target_timestamp: Duration,
         bytes_count: usize,
         c: f32,
+        fixation_confidence: Option<f32>,
+        c_effective: f32,
     ) -> Duration {
         self.video_packets_total += 1;
         self.video_packets_partial_sum += 1;
@@ -323,6 +328,8 @@ impl StatisticsManager {
                 frame.frame_encoded_MTP = Instant::now();
                 frame.video_packet_bytes_MTP = bytes_count;
                 frame.frame_c_MTP = c;
+                frame.fixation_confidence_MTP = fixation_confidence;
+                frame.c_effective_MTP = c_effective;
                 let _ = frame.frame_encoded_MTP.saturating_duration_since(frame.frame_composed_MTP);
             }
             frame.frame_encoded = Instant::now();
@@ -441,6 +448,11 @@ impl StatisticsManager {
                 let encoded_frame_size = frame.video_packet_bytes_MTP.to_string();
                 let experiment_target_timestamp=Local::now().format("%Y%m%d_%H%M%S").to_string();
                 let controller_string = frame.frame_c_MTP.to_string();
+                let fixation_confidence_str = frame
+                    .fixation_confidence_MTP
+                    .map(|f| f.to_string())
+                    .unwrap_or_else(|| String::new());
+                let c_effective_str = frame.c_effective_MTP.to_string();
                 let latency_strings = [
                     timestamp_for_this_frame,
                     interval_trackingReceived_framePresentInVirtualDevice,
@@ -459,6 +471,8 @@ impl StatisticsManager {
                     recv_bitrate_mbps,
                     controller_string,
                     gaze_variance_magnitude,
+                    fixation_confidence_str,
+                    c_effective_str,
                     experiment_target_timestamp,
                 ];
                 write_MTP_latency_to_csv("statistics_mtp.csv", latency_strings);

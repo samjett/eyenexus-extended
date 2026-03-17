@@ -40,6 +40,18 @@ use alvr_session::{CodecType, Settings};
 use bitrate::BitrateManager;
 use chrono::Utc;
 use statistics::StatisticsManager;
+/// Last (fixation_confidence, c_effective) from get_controller_c for demo logging.
+static LAST_FIXATION_DEBUG: Lazy<Mutex<(Option<f32>, f32)>> =
+    Lazy::new(|| Mutex::new((None, 0.0)));
+
+/// Returns the last (fixation_confidence, c_effective) from get_controller_c. Used for CSV logging.
+pub fn take_last_fixation_debug() -> (Option<f32>, f32) {
+    let mut guard = LAST_FIXATION_DEBUG.lock();
+    let out = *guard;
+    *guard = (None, 0.0);
+    out
+}
+
 use std::{
     collections::HashMap,
     env,
@@ -434,25 +446,63 @@ pub unsafe extern "C" fn HmdDriverFactory(
         right_y
     }
     extern "C" fn get_controller_c() -> f32{
-        let mut c = 2.;
+        const MIN_CONTROLLER_C: f32 = 2.0;
+        const MAX_CONTROLLER_C: f32 = 80.0;
+        const VARIANCE_HALF_CONFIDENCE: f32 = 1200.0;
+        const BASE_CONFIDENCE_MODULATION: f32 = 0.15;
+
+        let mut base_c = MIN_CONTROLLER_C;
         let now = Utc::now().timestamp_micros();
         if let Some(stats_manager) = &mut *STATISTICS_MANAGER.lock() {
-            c = stats_manager.EyeNexus_controller_c;
+            base_c = stats_manager.EyeNexus_controller_c;
             let last_change = stats_manager.last_change_time;
             let last_action =stats_manager.last_action;
             
             // EyeNexus-Network Monitoring: Handle feedback timeout (Sec 3.5.2)
             // If no feedback is received for a certain interval (timeout), apply a sharper multiplicative decrease.
             if (now - last_change) > ((1.*1000.*1000./72.*2.) as i64) && last_action == 0{
-                c = c*0.85; // beta_t = 0.85 for timeout
+                base_c = base_c*0.85; // beta_t = 0.85 for timeout
 
             }
-            if c < 2.{
-                c = 2.;
+            if base_c < MIN_CONTROLLER_C{
+                base_c = MIN_CONTROLLER_C;
             }
-            stats_manager.EyeNexus_controller_c = c;
+            stats_manager.EyeNexus_controller_c = base_c;
         }
-        c
+
+        let settings_lock = SERVER_DATA_MANAGER.read();
+        let fixation_confidence_enabled = settings_lock.settings().video.fixation_confidence_enabled;
+        let fixation_confidence_exaggeration = settings_lock
+            .settings()
+            .video
+            .fixation_confidence_exaggeration
+            .max(1.0);
+        drop(settings_lock);
+
+        if !fixation_confidence_enabled {
+            let c_out = base_c.clamp(MIN_CONTROLLER_C, MAX_CONTROLLER_C);
+            *LAST_FIXATION_DEBUG.lock() = (None, c_out);
+            return c_out;
+        }
+
+        let mut c_effective = base_c;
+        let mut fixation_confidence = None;
+        if let Some(gaze_variance_magnitude) = BITRATE_MANAGER.lock().get_gaze_variance_magnitude() {
+            // Stable gaze (lower variance) raises confidence; noisy gaze lowers confidence.
+            let conf =
+                (1.0 / (1.0 + (gaze_variance_magnitude as f32 / VARIANCE_HALF_CONFIDENCE)))
+                    .clamp(0.0, 1.0);
+            fixation_confidence = Some(conf);
+            let centered_confidence = (conf - 0.5) * 2.0;
+            let modulation_strength =
+                (BASE_CONFIDENCE_MODULATION * fixation_confidence_exaggeration).min(0.6);
+            let c_modifier = 1.0 + centered_confidence * modulation_strength;
+
+            c_effective = base_c * c_modifier;
+        }
+        let c_out = c_effective.clamp(MIN_CONTROLLER_C, MAX_CONTROLLER_C);
+        *LAST_FIXATION_DEBUG.lock() = (fixation_confidence, c_out);
+        c_out
     } 
 
     extern "C" fn wait_for_vsync() {

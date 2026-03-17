@@ -732,6 +732,10 @@ void NvEncoder::GenQPDeltaMap(int leftX, int leftY, int rightX, int rightY, uint
 
     float c = 2.;
     c = controller_c;
+    constexpr float kControllerCDeltaThreshold = 0.01f;
+    changed = changed || !m_hasPrevControllerC || std::abs(c - m_prevControllerC) >= kControllerCDeltaThreshold;
+    m_prevControllerC = c;
+    m_hasPrevControllerC = true;
 
     if(changed){
 

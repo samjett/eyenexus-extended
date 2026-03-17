@@ -31,6 +31,8 @@ class Settings {
     float m_foveationCenterShiftY;
     float m_foveationEdgeRatioX;
     float m_foveationEdgeRatioY;
+    bool m_fixationConfidenceEnabled;
+    float m_fixationConfidenceExaggeration;
 
     bool m_enableColorCorrection;
     float m_brightness;

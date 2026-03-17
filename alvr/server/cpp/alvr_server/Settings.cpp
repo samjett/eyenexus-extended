@@ -51,6 +51,9 @@ void Settings::Load() {
         m_foveationCenterShiftY = (float)config.get("foveation_center_shift_y").get<double>();
         m_foveationEdgeRatioX = (float)config.get("foveation_edge_ratio_x").get<double>();
         m_foveationEdgeRatioY = (float)config.get("foveation_edge_ratio_y").get<double>();
+        m_fixationConfidenceEnabled = config.get("fixation_confidence_enabled").get<bool>();
+        m_fixationConfidenceExaggeration =
+            (float)config.get("fixation_confidence_exaggeration").get<double>();
 
         m_enableColorCorrection = config.get("enable_color_correction").get<bool>();
         m_brightness = (float)config.get("brightness").get<double>();
